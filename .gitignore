@@ -1,0 +1,8 @@
+/target/
+/data/
+*.db*
+
+/data-*/
+/dist/
+__pycache__/
+*.py[cod]
