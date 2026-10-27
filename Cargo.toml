@@ -1,6 +1,6 @@
 [package]
 name = "leis-mcp"
-version = "1.0.0"
+version = "1.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/pleasematheus/leis-mcp"
@@ -19,6 +19,7 @@ rmcp = { version = "3.6", features = ["server", "transport-io", "transport-strea
 rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }

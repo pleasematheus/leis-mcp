@@ -18,6 +18,9 @@ pub fn fixture(data: &Path) {
     let output = command(data).arg("status").output().unwrap();
     assert!(output.status.success(), "{:?}", output);
     let db = Connection::open(data.join("acervo.db")).unwrap();
+    db.execute_batch("CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        CREATE TABLE normas(path TEXT PRIMARY KEY,text TEXT NOT NULL);
+        CREATE VIRTUAL TABLE trechos USING fts5(path UNINDEXED,linha UNINDEXED,text,tokenize='unicode61 remove_diacritics 2');").unwrap();
     db.execute("INSERT INTO normas VALUES (?1, ?2)", params![PATH, TEXT])
         .unwrap();
     db.execute(

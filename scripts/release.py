@@ -89,7 +89,11 @@ def package(target, root=ROOT, output=None):
             "5. Configure seu cliente MCP com o executavel e a pasta dados.\n"
             "   Use caminhos absolutos. O modelo esta em mcp-config.example.json.\n\n"
             "O usuario final nao precisa de Rust, Git, Python ou servidor SQLite.\n"
-            "O primeiro uso baixa o acervo. Reserve espaco para o banco e a importacao.\n"
+            "O primeiro uso baixa o acervo. Reserve espaco para os Markdown e o indice.\n"
+            "Os textos ficam em dados/acervo; indice.db guarda apenas a busca e os metadados.\n"
+            "Se reutilizar acervo.db de uma versao antiga, a migracao exporta os textos sem novo download.\n"
+            f"Para migrar separadamente: {local} --data-dir ./dados migrar\n"
+            "O banco antigo fica preservado como backup. Consulte o README antes de remove-lo.\n"
             "Confira as fontes oficiais antes de citar. Consulte o README para detalhes.\n",
             encoding="utf-8",
         )

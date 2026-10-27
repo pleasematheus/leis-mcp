@@ -2,7 +2,7 @@
 
 [Baixar executáveis](https://github.com/pleasematheus/leis-mcp/releases/latest) · [Histórico de versões](CHANGELOG.md)
 
-Servidor MCP em Rust para pesquisar o acervo de legislação de [ctresb/leis](https://github.com/ctresb/leis). O programa baixa os textos, cria um índice SQLite local e fornece ferramentas de consulta ao assistente.
+Servidor MCP em Rust para pesquisar o acervo de legislação de [ctresb/leis](https://github.com/ctresb/leis). O programa mantém os textos em arquivos Markdown, cria um índice SQLite local sem cópia do texto completo e fornece ferramentas de consulta ao assistente.
 
 Não é necessário instalar Git ou um servidor de banco de dados. O programa não chama uma API de IA e não exige uma chave OpenAI. O cliente de IA tem seus próprios requisitos de acesso.
 
@@ -83,6 +83,44 @@ Antes da primeira importação, `status` mostra `normas: 0` e `commit: null`. Ap
 
 Faça a primeira atualização pelo terminal antes de conectar o MCP. O download e a indexação podem exceder o tempo de espera do cliente.
 
+## Arquivos Markdown e migração
+
+A fonte local das consultas fica em arquivos `.md`. O SQLite guarda os termos de busca, as posições dos trechos, os caminhos, os hashes e os metadados de atualização. O índice FTS5 usa uma tabela sem conteúdo; ele não mantém outra cópia do texto completo nem dos trechos.
+
+```text
+dados/
+  acervo/
+    lote-.../
+      federal/...
+      estaduais/...
+      constituicao.md
+  indice.db
+  trees.db
+  acervo.db          backup da base antiga, quando houver migração
+```
+
+Cada lote mantém os caminhos originais das normas. Arquivos inalterados continuam no lote anterior. A busca e a leitura retornam `arquivo_local`, com o caminho absoluto do Markdown ativo.
+
+O atualizador prepara os arquivos de um lote antes de ativar suas referências no índice. Se a preparação ou a transação falhar, os documentos anteriores continuam ativos. Uma trava de leitura impede a limpeza de arquivos ainda usados por consultas. Arquivos obsoletos e lotes sem referências são limpos durante as atualizações. Se um arquivo antigo não puder ser removido, por exemplo por estar aberto em outro programa, a limpeza ficará pendente e será tentada novamente. O status informa `arquivos_obsoletos_pendentes`. Lotes abandonados por uma interrupção não entram nas buscas e são limpos na próxima atualização.
+
+Você pode abrir os Markdown e copiar os textos para outras ferramentas. Trate `acervo/` como uma pasta gerenciada pelo atualizador. Guarde anotações pessoais fora dela. A leitura confere o SHA-256: se um arquivo estiver ausente ou tiver sido alterado por fora, o MCP informa o erro. Use uma cópia original ou `atualizar --completo` para reconstruir os arquivos.
+
+### Migrar uma base já baixada
+
+Se a pasta de dados contiver o antigo `acervo.db`, a primeira busca, leitura ou atualização exportará os textos para Markdown e construirá o novo índice. Esse processo não baixa as normas novamente. A consulta `status` não inicia a migração; ela informa `migracao_necessaria: true` enquanto houver uma base antiga pendente.
+
+Para acompanhar a migração pelo terminal, execute antes de conectar o cliente:
+
+```powershell
+.\leis-mcp.exe --data-dir CAMINHO_DA_PASTA_DE_DADOS migrar
+```
+
+No Mac ou Linux, use `./leis-mcp`. Em uma compilação local, use o caminho do executável em `target/release` ou no target compilado.
+
+A migração pode levar vários minutos. Ela mostra a quantidade de normas exportadas e o percentual. Reserve espaço para os Markdown e o novo índice além do banco antigo.
+
+O `acervo.db` permanece intacto como cópia de segurança. Depois de verificar os arquivos e as buscas, você pode arquivar ou remover esse backup com os processos antigos encerrados. Use o executável novo para acessar o formato Markdown; versões anteriores continuam usando o banco antigo.
+
 ## Atualização do acervo
 
 A verificação ocorre quando você executa `atualizar` ou quando o assistente chama `buscar_normas` ou `atualizar_acervo`.
@@ -90,12 +128,19 @@ A verificação ocorre quando você executa `atualizar` ou quando o assistente c
 1. O programa consulta a data da última verificação bem-sucedida.
 2. Se passaram menos de 24 horas, usa o acervo local.
 3. Caso contrário, consulta o commit da branch `main` no GitHub.
-4. Se o commit mudou, baixa o acervo completo e reconstrói o índice.
-5. Grava o novo commit e as datas após concluir a importação.
+4. No primeiro uso, baixa o acervo completo. Se já houver uma base, compara as árvores Git das duas versões e ignora as pastas sem mudanças.
+5. Baixa somente os arquivos Markdown novos ou alterados. Remove do índice os documentos excluídos.
+6. Aplica o lote em uma transação e grava o novo commit e as datas após concluir.
 
 Se o commit não mudou, registra apenas a nova data de verificação. Não há agendamento em segundo plano. Com o programa fechado, não há verificação.
 
-**A atualização ainda não é incremental.** Cada commit novo exige um download completo e uma nova indexação. O programa recebe o que foi publicado no repositório; ele não coleta leis diretamente dos portais oficiais.
+**As atualizações são incrementais.** O programa reutiliza bases criadas pelas versões anteriores. Ele compara as pastas pelo identificador Git, sem depender da lista de diferenças limitada a 300 arquivos. Se só houver mudanças fora do acervo, avança o commit local sem baixar textos.
+
+O download completo ocorre no primeiro uso ou quando você solicita `--completo`. A diferença é calculada por arquivo: um Markdown alterado é baixado inteiro. Não é um patch dos bytes individuais. Uma renomeação é tratada como remoção do caminho antigo e inclusão do novo.
+
+Os metadados das árvores ficam em `trees.db`. O cache pode ser reutilizado após uma tentativa interrompida, reduzindo consultas à API do GitHub. Se o GitHub limitar as consultas ou retornar uma árvore incompleta, a atualização falha e preserva a base anterior. O programa não inicia um download completo como alternativa automática.
+
+O programa recebe o que foi publicado no repositório; ele não coleta leis diretamente dos portais oficiais.
 
 Para ignorar o intervalo de 24 horas, execute:
 
@@ -104,6 +149,17 @@ Para ignorar o intervalo de 24 horas, execute:
 ```
 
 No Mac, use o mesmo argumento com `./target/release/leis-mcp`. A opção `--forcar` força a verificação. Ela não refaz o download se o commit for igual.
+
+Para reconstruir a base completa, inclusive quando o commit não mudou, execute:
+
+```powershell
+.\target\release\leis-mcp.exe --data-dir .\data-teste atualizar --completo
+```
+
+Essa opção ignora o intervalo de 24 horas e baixa o acervo inteiro. Use-a para reconstrução ou quando a versão anterior não estiver mais disponível na API do GitHub.
+
+O comando `status` informa `modalidade_ultima_atualizacao`. Após uma atualização incremental, `resumo_ultima_atualizacao` contém as quantidades de documentos adicionados, alterados e removidos e os bytes dos textos baixados. Esse contador de bytes não inclui os metadados da API.
+
 
 Se a importação falhar, a transação preserva a base anterior. Uma falha de verificação não inicia um novo intervalo de 24 horas. Na busca MCP, o programa tenta usar a base existente e retorna `aviso_atualizacao` quando a verificação falha.
 
@@ -115,11 +171,12 @@ O terminal mostra as etapas de consulta, download e indexação.
 
 - Com tamanho total conhecido, o download mostra percentual, volume, velocidade e estimativa de tempo restante.
 - Sem tamanho total, mostra volume recebido, velocidade e tempo decorrido.
-- A indexação mostra a quantidade de normas e o caminho em processamento. Não há percentual de indexação.
+- A atualização incremental mostra a quantidade de arquivos preparados e seu percentual. Essa porcentagem mede a preparação do lote; aguarde a confirmação de aplicação no banco.
+- A indexação completa mostra a quantidade de normas, o caminho em processamento e a porcentagem dos bytes do arquivo compactado já lidos. Esse valor não representa a porcentagem de normas nem confirma a gravação no banco. A confirmação é a mensagem `Indexação concluída`.
 
-As mensagens de progresso usam `stderr`. Os resultados CLI e as mensagens MCP usam `stdout`. Em saídas redirecionadas, as barras podem ficar ocultas; as mensagens de início e fim continuam disponíveis.
+As mensagens de progresso usam `stderr`. Os resultados CLI e as mensagens MCP usam `stdout`. O programa emite uma linha de progresso a cada dois segundos, inclusive quando a saída é capturada ou redirecionada para logs. A linha inclui o tempo decorrido e continua sendo emitida enquanto o programa aguarda dados. As barras animadas podem ficar ocultas; as linhas periódicas continuam disponíveis.
 
-Para interromper no terminal, pressione `Ctrl+C`. O download não tem retomada parcial. A próxima tentativa baixa o arquivo novamente. Uma transação interrompida não publica a versão incompleta do índice.
+Para interromper no terminal, pressione `Ctrl+C`. O arquivo compactado do primeiro uso não tem retomada parcial. Na atualização incremental, os documentos preparados ficam em armazenamento temporário até o lote estar completo; uma nova tentativa pode baixá-los outra vez. O cache das árvores é preservado. Uma transação interrompida não publica uma versão incompleta do índice.
 
 Para ver uma demonstração com dados simulados, sem baixar o acervo, execute:
 
@@ -211,9 +268,9 @@ Os resultados incluem um link para a versão do documento no GitHub. Para obter 
 
 A opção `--data-dir` define a pasta de dados. A variável `LEIS_DATA_DIR` também pode definir esse caminho. Sem as duas opções, o programa usa a pasta de dados do usuário fornecida pelo sistema.
 
-O arquivo `acervo.db` contém textos, índice e metadados. SQLite pode criar arquivos auxiliares `acervo.db-wal` e `acervo.db-shm`. O arquivo `atualizacao.lock` controla atualizações simultâneas. Sua presença no disco não significa que uma atualização esteja ativa; o bloqueio é controlado pelo sistema.
+Os arquivos em `acervo/` contêm os textos das normas. O `indice.db` contém apenas o índice de busca e os metadados da versão local. O `trees.db` contém o cache das árvores Git. O `acervo.db`, quando presente após a migração, é uma cópia de segurança da base antiga. SQLite pode criar arquivos auxiliares `indice.db-wal` e `indice.db-shm`. O arquivo `atualizacao.lock` controla atualizações simultâneas. Sua presença no disco não significa que uma atualização esteja ativa; o bloqueio é controlado pelo sistema.
 
-O programa não mantém uma árvore de arquivos Markdown extraídos. Os textos ficam no banco. Não altere o banco manualmente durante o uso.
+A pasta `.preparacao/` contém os lotes ainda em preparo. Não altere o índice, os marcadores dos lotes ou essa pasta durante uma atualização. Os arquivos só ficam ativos após o commit do índice.
 
 ## Solução de problemas
 
@@ -221,9 +278,10 @@ O programa não mantém uma árvore de arquivos Markdown extraídos. Os textos f
 | --- | --- |
 | `Acervo vazio` ou `normas: 0` | Execute `atualizar` com a mesma pasta de dados usada pelo cliente. |
 | O cliente mostra uma base diferente da CLI | Confira os caminhos absolutos de `--data-dir`. |
+| `migracao_necessaria: true` | Execute `migrar` com a mesma pasta de dados usada pelo cliente. A migração também ocorre antes da primeira busca, leitura ou atualização. |
 | A busca não retorna resultados | Reduza a consulta e remova o filtro de pasta. Confira a cobertura do acervo. |
 | A verificação é ignorada | O intervalo de 24 horas ainda está ativo. Use `atualizar --forcar` se precisar verificar agora. |
-| Erro de rede ou limite do GitHub | Aguarde e tente novamente. O cliente GitHub desta versão não usa token de autenticação. |
+| Erro de rede ou limite do GitHub | Aguarde e tente novamente. A base anterior fica disponível, e o cache de árvores reduz o trabalho da próxima tentativa. O cliente desta versão não usa token de autenticação. |
 | Primeira chamada MCP demora | Faça a primeira atualização pelo terminal. Depois, reconecte o cliente. |
 | Atualização em andamento | Aguarde o outro processo. Não remova o arquivo de bloqueio de um processo ativo. |
 | Porta HTTP ocupada | Escolha outra porta com `--port`. |
@@ -244,8 +302,10 @@ A suíte automatizada cobre:
 
 - CLI: seleção da pasta por argumento ou variável de ambiente, códigos de saída, respostas JSON, busca local e erros de atualização.
 - MCP: inicialização, ferramentas, busca, leitura, atualização com verificação recente, parâmetros inválidos e recuperação após erro. Os testes usam STDIO e uma sessão HTTP em localhost.
-- Progresso: preservação dos bytes lidos, erro durante a transferência, interrupção e separação de stdout e stderr.
-- Armazenamento: busca, leitura, filtro de pasta e preservação da base após falha de importação.
+- Progresso: preservação dos bytes lidos, erro durante a transferência, interrupção, porcentagem de leitura do arquivo e separação de stdout e stderr. Um teste com pipes exige logs parciais antes de permitir que a operação termine.
+- Armazenamento: busca e leitura a partir dos Markdown, ausência de texto completo no índice, filtro de pasta, respostas consistentes, validação de integridade, limpeza após o commit e proteção de leitores concorrentes.
+- Migração: exportação da base antiga sem rede, preservação do backup e das datas e nova tentativa após uma falha.
+- Atualização incremental: migração da base antiga sem novo download completo, inclusão, alteração, exclusão, renomeação, mais de 300 documentos, cache de árvores, limite da API e rollback após falhas de rede ou banco. Os testes HTTP usam um servidor em localhost.
 
 Os testes usam dados temporários e não baixam o acervo. O teste HTTP usa apenas a interface local. O teste auxiliar `progress_output_child` aparece como ignorado na execução normal; o teste principal o executa em subprocessos para verificar as saídas de sucesso e falha.
 
@@ -253,14 +313,14 @@ Uma validação local no Windows também confirmou a importação de um acervo r
 
 ## CI/CD e distribuição
 
-A versão atual é `1.0.0`. O arquivo `.github/workflows/ci.yml` executa as verificações em pushes, pull requests e execuções manuais. Tags no formato `vVERSAO` também acionam a publicação.
+A versão atual é `1.2.0`. O arquivo `.github/workflows/ci.yml` executa as verificações em pushes, pull requests e execuções manuais. Tags no formato `vVERSAO` também acionam a publicação.
 
 | Pacote | Runner | Arquitetura |
 | --- | --- | --- |
-| `leis-mcp-v1.0.0-windows-x64.zip` | Windows 2025 | x64 |
-| `leis-mcp-v1.0.0-linux-x64.tar.gz` | Ubuntu 24.04 | x64 |
-| `leis-mcp-v1.0.0-macos-arm64.tar.gz` | macOS 15 | Apple Silicon |
-| `leis-mcp-v1.0.0-macos-x64.tar.gz` | macOS 15 Intel | Intel |
+| `leis-mcp-v1.2.0-windows-x64.zip` | Windows 2025 | x64 |
+| `leis-mcp-v1.2.0-linux-x64.tar.gz` | Ubuntu 24.04 | x64 |
+| `leis-mcp-v1.2.0-macos-arm64.tar.gz` | macOS 15 | Apple Silicon |
+| `leis-mcp-v1.2.0-macos-x64.tar.gz` | macOS 15 Intel | Intel |
 
 Os nomes mudam conforme a versão do Cargo. O pacote Linux usa o ambiente de compilação Ubuntu 24.04. O executável precisa de um sistema com bibliotecas compatíveis.
 
@@ -276,8 +336,8 @@ Cada pacote contém o executável, `README.md`, `CHANGELOG.md`, `LICENSE`, `LEIA
 4. Para publicar a versão atual, execute no repositório Git:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 A tag precisa corresponder à versão em `Cargo.toml` e `Cargo.lock`. Uma divergência interrompe a pipeline. O repositório precisa ter o código dessa versão enviado antes da tag.
@@ -298,7 +358,7 @@ No Windows x64:
 
 ```powershell
 cargo build --release --locked --target x86_64-pc-windows-msvc
-python scripts/release.py check-version --tag v1.0.0
+python scripts/release.py check-version --tag v1.2.0
 python scripts/release.py package --target x86_64-pc-windows-msvc
 python scripts/release.py smoke --target x86_64-pc-windows-msvc
 ```
@@ -314,7 +374,7 @@ Para gerar um pacote no Mac ou no Linux, execute os mesmos comandos com o target
 O pacote também gera um arquivo `.sha256`. A pipeline combina os quatro checksums em `SHA256SUMS.txt`. No Windows, compare o SHA-256 do download com o valor publicado:
 
 ```powershell
-Get-FileHash .\leis-mcp-v1.0.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\leis-mcp-v1.2.0-windows-x64.zip -Algorithm SHA256
 ```
 
 ### Política de versão

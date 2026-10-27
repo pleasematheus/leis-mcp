@@ -7,7 +7,7 @@ fn status_uses_environment_data_directory_and_prints_json() {
     let dir = tempfile::tempdir().unwrap();
     let output = command(dir.path()).arg("status").output().unwrap();
     assert!(output.status.success());
-    assert!(dir.path().join("acervo.db").exists());
+    assert!(dir.path().join("indice.db").exists());
     assert_eq!(json_output(&output)["normas"], 0);
     assert!(json_output(&output)["commit"].is_null());
     assert!(output.stderr.is_empty());
@@ -25,7 +25,7 @@ fn explicit_data_directory_overrides_environment_and_supports_spaces() {
         .unwrap();
     assert!(output.status.success());
     assert_eq!(json_output(&output)["normas"], 0);
-    assert!(explicit.join("acervo.db").exists());
+    assert!(explicit.join("indice.db").exists());
     assert!(!from_env.exists());
 }
 
@@ -99,4 +99,30 @@ fn update_failure_returns_error_json_and_failure_exit_code() {
     let status = command(dir.path()).arg("status").output().unwrap();
     assert_eq!(json_output(&status)["commit"], SHA);
     assert_eq!(json_output(&status)["normas"], 1);
+}
+
+#[test]
+fn migrate_command_exports_existing_text_and_reports_filesystem_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path());
+    let before = command(dir.path()).arg("status").output().unwrap();
+    assert_eq!(json_output(&before)["migracao_necessaria"], true);
+    let output = command(dir.path()).arg("migrar").output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let state = json_output(&output);
+    assert_eq!(state["armazenamento"], "markdown");
+    assert_eq!(state["migracao_necessaria"], false);
+    assert_eq!(state["commit"], SHA);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Migração concluída"));
+    let db = rusqlite::Connection::open(dir.path().join("indice.db")).unwrap();
+    let batch: String = db
+        .query_row("SELECT batch FROM normas WHERE path=?1", [PATH], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("acervo").join(batch).join(PATH)).unwrap(),
+        TEXT
+    );
+    assert!(dir.path().join("acervo.db").exists());
 }

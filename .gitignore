@@ -6,3 +6,8 @@
 /dist/
 __pycache__/
 *.py[cod]
+/dados/
+/acervo/
+/.preparacao/
+/acervo.lock
+/atualizacao.lock
