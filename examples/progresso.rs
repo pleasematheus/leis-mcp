@@ -12,7 +12,7 @@ use std::{
 struct SlowSink;
 impl Write for SlowSink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        thread::sleep(Duration::from_millis(30));
+        thread::sleep(Duration::from_millis(40));
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -33,10 +33,18 @@ fn main() -> io::Result<()> {
         assert_eq!(bytes, 512 * 1024);
         download.finish("Transferência simulada concluída.");
     }
-    let indexing = Progress::index();
+    let migration = Progress::migration(1);
+    migration.indexed(1, "federal/exemplo.md (simulado)");
+    migration.finish("Migração simulada concluída.");
+    let delta = Progress::changes(2);
+    delta.indexed(2, "federal/exemplo.md (simulado)");
+    delta.finish("Atualização incremental simulada concluída.");
+    let indexing = Progress::index(Some(100));
+    let mut reader = indexing.reader(io::repeat(0).take(100));
     for count in 1..=100 {
+        reader.read_exact(&mut [0; 1])?;
         indexing.indexed(count, "federal/exemplo.md (simulado)");
-        thread::sleep(Duration::from_millis(15));
+        thread::sleep(Duration::from_millis(25));
     }
     indexing.finish("Demonstração concluída: 100 normas simuladas.");
     Ok(())
